@@ -1336,4 +1336,36 @@ async function renderAdminPanel() {
       <button class="admin-btn admin-btn-primary" onclick="showSection('notes')">📌 Notlar Bölümüne Git</button>
     </div>
 
-    >
+    
+
+// ============================================================
+// FIREBASE HAZIR → LOADİNG EKRANI KAPAT
+// ============================================================
+waitFb(async () => {
+  try {
+    const { db, ref, get, set } = window._fb;
+    const snap = await get(ref(db, 'config/admin'));
+    if (!snap.val()) {
+      await set(ref(db, 'config/admin'), {
+        username: 'admin',
+        passwordHash: hashPassword('Casa36Admin!')
+      });
+    }
+  } catch(e) { console.error('Init error:', e); }
+  // Loading ekranını kapat - login ekranını göster
+  const ls = document.getElementById('loadingScreen');
+  if (ls) ls.classList.add('hidden');
+});
+
+// Güvenlik: 8 saniye sonra hala açıksa zorla kapat
+setTimeout(function() {
+  const ls = document.getElementById('loadingScreen');
+  if (ls && !ls.classList.contains('hidden')) {
+    ls.classList.add('hidden');
+    console.warn('Loading timeout - force closed');
+  }
+}, 8000);
+</script>
+
+</body>
+</html>
