@@ -1352,6 +1352,367 @@ async function renderAdminPanel() {
       <button class="admin-btn admin-btn-primary" onclick="showSection('notes')">📌 Notlar Bölümüne Git</button>
     </div>
   `;
+  renderTickerAdmin();
+}
+
+// ============================================================
+// YARDIMCI: HTML KAÇIŞ
+// ============================================================
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+// ============================================================
+// DUYURULAR (TICKER)
+// ============================================================
+let _tickerData = {};
+
+function tickerItemsSorted() {
+  return Object.keys(_tickerData).map(function(id) {
+    const v = _tickerData[id];
+    return {
+      id: id,
+      text: (typeof v === 'string') ? v : ((v && v.text) || ''),
+      createdAt: (v && v.createdAt) || 0
+    };
+  }).filter(function(x) { return x.text.trim() !== ''; })
+    .sort(function(a, b) { return a.createdAt - b.createdAt; });
+}
+
+function listenTicker() {
+  const { db, ref, onValue } = window._fb;
+  onValue(ref(db, 'ticker'), function(snap) {
+    _tickerData = snap.val() || {};
+    renderTicker();
+    const ap = document.getElementById('admin-panel');
+    if (ap && ap.classList.contains('visible')) renderTickerAdmin();
+  });
+}
+
+function renderTicker() {
+  const inner = document.getElementById('tickerInner');
+  if (!inner) return;
+  const items = tickerItemsSorted();
+  if (!items.length) {
+    inner.innerHTML = '<span class="ticker-empty" id="tickerEmpty">Henüz duyuru girilmedi.</span>';
+    return;
+  }
+  // Kesintisiz kayma için iki kez yazıyoruz (animasyon -50% kaydırıyor)
+  const block = items.map(function(i) {
+    return '<span class="ticker-item">' + escapeHtml(i.text) + '</span>';
+  }).join('');
+  inner.innerHTML = block + block;
+}
+
+function renderTickerAdmin() {
+  const list = document.getElementById('ticker-list-admin');
+  if (!list) return;
+  const items = tickerItemsSorted();
+  if (!items.length) {
+    list.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:0.82rem;padding:4px 0;">Henüz duyuru yok.</div>';
+    return;
+  }
+  list.innerHTML = items.map(function(i) {
+    return '<div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+      + '<span style="flex:1;font-size:0.85rem;color:#cbd5e1;">' + escapeHtml(i.text) + '</span>'
+      + '<button class="admin-btn admin-btn-danger" style="padding:4px 10px;font-size:0.72rem;flex-shrink:0;" onclick="deleteTickerItem(\'' + i.id + '\')">🗑️ Sil</button>'
+      + '</div>';
+  }).join('');
+}
+
+async function addTickerItem() {
+  const input = document.getElementById('ticker-new-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) { showToast('Duyuru metni boş olamaz.', 'warn'); return; }
+  try {
+    const { db, ref, set } = window._fb;
+    const id = 't_' + Date.now();
+    await set(ref(db, 'ticker/' + id), { text: text, createdAt: Date.now() });
+    input.value = '';
+    showToast('Duyuru eklendi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Duyuru eklenemedi.', 'error');
+  }
+}
+
+async function deleteTickerItem(id) {
+  if (!confirm('Bu duyuruyu silmek istiyor musunuz?')) return;
+  try {
+    const { db, ref, remove } = window._fb;
+    await remove(ref(db, 'ticker/' + id));
+    showToast('Duyuru silindi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Duyuru silinemedi.', 'error');
+  }
+}
+
+// ============================================================
+// NOTLAR (NOTES)
+// ============================================================
+let _notesData = {};
+
+function notesSorted() {
+  return Object.keys(_notesData).map(function(id) {
+    const v = _notesData[id] || {};
+    return {
+      id: id,
+      text: (typeof v === 'string') ? v : (v.text || ''),
+      createdAt: v.createdAt || 0,
+      author: v.author || ''
+    };
+  }).filter(function(x) { return x.text.trim() !== ''; })
+    .sort(function(a, b) { return b.createdAt - a.createdAt; });
+}
+
+function listenNotes() {
+  const { db, ref, onValue } = window._fb;
+  onValue(ref(db, 'notes'), function(snap) {
+    _notesData = snap.val() || {};
+    const np = document.getElementById('notes-panel');
+    if (np && np.style.display !== 'none') renderNotesPanel();
+  });
+}
+
+function renderNotesPanel() {
+  const panel = document.getElementById('notes-panel');
+  if (!panel) return;
+  const isAdminOrManager = currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager');
+  const items = notesSorted();
+
+  let addBox = '';
+  if (isAdminOrManager) {
+    addBox = '<div class="admin-card" style="margin-bottom:20px;">'
+      + '<div class="admin-card-title">📌 <span>Yeni Not</span> Ekle</div>'
+      + '<textarea class="admin-input" id="note-new-input" placeholder="Not metni..." style="min-height:80px;resize:vertical;"></textarea>'
+      + '<button class="admin-btn admin-btn-primary" onclick="addNote()">➕ Notu Ekle</button>'
+      + '</div>';
+  }
+
+  let listHTML;
+  if (!items.length) {
+    listHTML = '<div style="color:rgba(255,255,255,0.3);font-size:0.9rem;text-align:center;padding:24px;">Henüz not eklenmemiş.</div>';
+  } else {
+    listHTML = items.map(function(n) {
+      const date = n.createdAt ? new Date(n.createdAt).toLocaleString('tr-TR') : '';
+      const delBtn = isAdminOrManager
+        ? '<button class="admin-btn admin-btn-danger" style="padding:4px 10px;font-size:0.72rem;flex-shrink:0;" onclick="deleteNote(\'' + n.id + '\')">🗑️ Sil</button>'
+        : '';
+      return '<div class="admin-card" style="margin-bottom:12px;">'
+        + '<div style="display:flex;gap:10px;align-items:flex-start;">'
+        + '<div style="flex:1;white-space:pre-wrap;color:#e2e8f0;font-size:0.92rem;line-height:1.5;">' + escapeHtml(n.text) + '</div>'
+        + delBtn
+        + '</div>'
+        + (date ? '<div style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin-top:8px;">' + escapeHtml(n.author) + (n.author ? ' • ' : '') + date + '</div>' : '')
+        + '</div>';
+    }).join('');
+  }
+
+  panel.innerHTML = '<div style="max-width:760px;margin:0 auto;">'
+    + '<h2 style="color:#fff;font-size:1.3rem;margin-bottom:18px;">📌 Notlar</h2>'
+    + addBox + listHTML + '</div>';
+}
+
+async function addNote() {
+  const input = document.getElementById('note-new-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) { showToast('Not metni boş olamaz.', 'warn'); return; }
+  try {
+    const { db, ref, set } = window._fb;
+    const id = 'n_' + Date.now();
+    await set(ref(db, 'notes/' + id), {
+      text: text,
+      createdAt: Date.now(),
+      author: (currentUser && currentUser.name) || ''
+    });
+    input.value = '';
+    showToast('Not eklendi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Not eklenemedi.', 'error');
+  }
+}
+
+async function deleteNote(id) {
+  if (!confirm('Bu notu silmek istiyor musunuz?')) return;
+  try {
+    const { db, ref, remove } = window._fb;
+    await remove(ref(db, 'notes/' + id));
+    showToast('Not silindi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Not silinemedi.', 'error');
+  }
+}
+
+// ============================================================
+// ŞİFREM (KULLANICININ KENDİ ŞİFRESİ)
+// ============================================================
+function renderUserPwdPanel() {
+  const panel = document.getElementById('user-pwd-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div style="max-width:480px;margin:0 auto;">'
+    + '<h2 style="color:#fff;font-size:1.3rem;margin-bottom:18px;">🔑 Şifrem</h2>'
+    + '<div class="admin-card">'
+    + '<div class="admin-card-title">🔐 <span>Şifreni</span> Değiştir</div>'
+    + '<input class="admin-input" type="password" id="my-old-pwd" placeholder="Mevcut şifre" />'
+    + '<input class="admin-input" type="password" id="my-new-pwd" placeholder="Yeni şifre" />'
+    + '<input class="admin-input" type="password" id="my-new-pwd2" placeholder="Yeni şifre (tekrar)" />'
+    + '<button class="admin-btn admin-btn-primary" onclick="changeMyPassword()">🔄 Şifreyi Değiştir</button>'
+    + '</div></div>';
+}
+
+async function changeMyPassword() {
+  const oldEl = document.getElementById('my-old-pwd');
+  const n1El = document.getElementById('my-new-pwd');
+  const n2El = document.getElementById('my-new-pwd2');
+  const oldPwd = oldEl.value, n1 = n1El.value, n2 = n2El.value;
+  if (!oldPwd || !n1 || !n2) { showToast('Tüm alanları doldurun.', 'warn'); return; }
+  if (n1 !== n2) { showToast('Yeni şifreler eşleşmiyor.', 'error'); return; }
+  if (n1.length < 4) { showToast('Yeni şifre en az 4 karakter olmalı.', 'warn'); return; }
+  try {
+    const { db, ref, get, set, update } = window._fb;
+    if (currentUser.uid && currentUser.uid.indexOf('admin_') === 0) {
+      // Admin kullanıcısı → config/admin
+      const snap = await get(ref(db, 'config/admin'));
+      const admin = snap.val();
+      if (!admin || admin.passwordHash !== hashPassword(oldPwd)) { showToast('Mevcut şifre hatalı.', 'error'); return; }
+      await update(ref(db, 'config/admin'), { passwordHash: hashPassword(n1) });
+    } else {
+      const snap = await get(ref(db, 'users/' + currentUser.uid));
+      const u = snap.val();
+      if (!u || u.passwordHash !== hashPassword(oldPwd)) { showToast('Mevcut şifre hatalı.', 'error'); return; }
+      await update(ref(db, 'users/' + currentUser.uid), { passwordHash: hashPassword(n1) });
+    }
+    oldEl.value = ''; n1El.value = ''; n2El.value = '';
+    showToast('Şifre güncellendi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Şifre güncellenemedi.', 'error');
+  }
+}
+
+// ============================================================
+// PERSONEL YÖNETİMİ (ADMIN)
+// ============================================================
+async function addUser() {
+  const dn = document.getElementById('new-displayname').value.trim();
+  const un = document.getElementById('new-username').value.trim();
+  const pw = document.getElementById('new-password').value;
+  const role = document.getElementById('new-role').value;
+  if (!dn || !un || !pw) { showToast('Ad, kullanıcı adı ve şifre gerekli.', 'warn'); return; }
+  try {
+    const { db, ref, get, set } = window._fb;
+    const usersSnap = await get(ref(db, 'users'));
+    const users = usersSnap.val() || {};
+    const exists = Object.values(users).some(function(u) { return u.username === un && u.active !== false; });
+    if (exists) { showToast('Bu kullanıcı adı zaten kullanılıyor.', 'error'); return; }
+    const id = 'u_' + Date.now();
+    await set(ref(db, 'users/' + id), {
+      username: un, displayName: dn, passwordHash: hashPassword(pw),
+      role: role || 'user', active: true
+    });
+    showToast('Personel eklendi.');
+    renderAdminPanel();
+  } catch (e) {
+    console.error(e);
+    showToast('Personel eklenemedi.', 'error');
+  }
+}
+
+let _editingUserUid = null;
+function editUser(uid, displayName, username, role) {
+  _editingUserUid = uid;
+  const modal = document.getElementById('editUserModal');
+  document.getElementById('edit-displayname').value = displayName || '';
+  document.getElementById('edit-username').value = username || '';
+  document.getElementById('edit-role').value = role || 'user';
+  const p1 = document.getElementById('edit-new-password'); if (p1) p1.value = '';
+  const p2 = document.getElementById('edit-newpwd'); if (p2) p2.value = '';
+  modal.style.display = 'flex';
+}
+
+async function saveEditUser() {
+  if (!_editingUserUid) return;
+  const dn = document.getElementById('edit-displayname').value.trim();
+  const un = document.getElementById('edit-username').value.trim();
+  const role = document.getElementById('edit-role').value;
+  const p1 = document.getElementById('edit-new-password');
+  const p2 = document.getElementById('edit-newpwd');
+  const newPwd = (p1 && p1.value) ? p1.value : (p2 && p2.value ? p2.value : '');
+  if (!dn || !un) { showToast('Ad ve kullanıcı adı gerekli.', 'warn'); return; }
+  try {
+    const { db, ref, update } = window._fb;
+    const patch = { displayName: dn, username: un, role: role || 'user' };
+    if (newPwd) patch.passwordHash = hashPassword(newPwd);
+    await update(ref(db, 'users/' + _editingUserUid), patch);
+    document.getElementById('editUserModal').style.display = 'none';
+    _editingUserUid = null;
+    showToast('Kullanıcı güncellendi.');
+    renderAdminPanel();
+  } catch (e) {
+    console.error(e);
+    showToast('Güncellenemedi.', 'error');
+  }
+}
+
+async function deleteUser(uid, name) {
+  if (!confirm((name || 'Bu kullanıcı') + ' silinsin mi?')) return;
+  try {
+    const { db, ref, remove } = window._fb;
+    await remove(ref(db, 'users/' + uid));
+    showToast('Kullanıcı silindi.');
+    renderAdminPanel();
+  } catch (e) {
+    console.error(e);
+    showToast('Silinemedi.', 'error');
+  }
+}
+
+async function changeAdminPwd() {
+  const oldPwd = document.getElementById('old-pwd').value;
+  const n1 = document.getElementById('new-pwd').value;
+  const n2 = document.getElementById('new-pwd2').value;
+  if (!oldPwd || !n1 || !n2) { showToast('Tüm alanları doldurun.', 'warn'); return; }
+  if (n1 !== n2) { showToast('Yeni şifreler eşleşmiyor.', 'error'); return; }
+  if (n1.length < 4) { showToast('Yeni şifre en az 4 karakter olmalı.', 'warn'); return; }
+  try {
+    const { db, ref, get, update } = window._fb;
+    const snap = await get(ref(db, 'config/admin'));
+    const admin = snap.val();
+    if (!admin || admin.passwordHash !== hashPassword(oldPwd)) { showToast('Mevcut şifre hatalı.', 'error'); return; }
+    await update(ref(db, 'config/admin'), { passwordHash: hashPassword(n1) });
+    document.getElementById('old-pwd').value = '';
+    document.getElementById('new-pwd').value = '';
+    document.getElementById('new-pwd2').value = '';
+    showToast('Yönetici şifresi güncellendi.');
+  } catch (e) {
+    console.error(e);
+    showToast('Şifre güncellenemedi.', 'error');
+  }
+}
+
+// ============================================================
+// ADMIN DURUM MÜDAHALESİ (mola başlat/yemek/hat)
+// ============================================================
+async function adminStartBreak(uid, name, status) {
+  try {
+    const { db, ref, get, set } = window._fb;
+    const presSnap = await get(ref(db, 'presence/' + uid));
+    const pres = presSnap.val();
+    if (!pres) { showToast('Personel aktif değil.', 'warn'); return; }
+    await set(ref(db, 'presence/' + uid), Object.assign({}, pres, { status: status, updatedAt: Date.now() }));
+    const labels = { break: 'Mola', food: 'Yemek molası', hat: 'Hat kapalı' };
+    showToast(name + ' → ' + (labels[status] || status));
+  } catch (e) {
+    console.error(e);
+    showToast('İşlem başarısız.', 'error');
+  }
 }
 
 // ============================================================
