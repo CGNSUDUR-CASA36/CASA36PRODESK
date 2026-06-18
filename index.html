@@ -956,7 +956,7 @@ function enterMainApp() {
   listenTicker();
   listenNotes();
   logEvent('login', 'Giriş yapıldı');
-  startIdleTimer(); // otomatik çıkış başlat
+  scheduleMidnightLogout(); // gece 00:00'da otomatik çıkış
 
   document.getElementById('loadingScreen').classList.add('hidden');
 }
@@ -1152,7 +1152,7 @@ async function logEvent(type, desc, durationMs) {
 
 // Logout cleanup
 async function doLogout() {
-  stopIdleTimer();
+  cancelMidnightLogout();
   const { db, ref, remove } = window._fb;
   await logEvent('logout', 'Çıkış yapıldı', Date.now() - sessionStartTime);
   await remove(ref(db, 'presence/' + currentUser.uid));
@@ -1168,48 +1168,35 @@ async function doLogout() {
 }
 
 // ============================================================
-// IDLE / OTOMATİK ÇIKIŞ (1 SAAT)
+// GECE YARISI (00:00) OTOMATİK ÇIKIŞ
+// 1 saatlik hareketsizlik çıkışı KALDIRILDI.
+// Çevrim içi olan her kullanıcı, kendi cihazında gün değişiminde
+// (gece 00:00) otomatik olarak çıkış yapar.
 // ============================================================
-const IDLE_TIMEOUT_MS  = 60 * 60 * 1000; // 60 dakika
-const IDLE_WARN_MS     = 55 * 60 * 1000; // 55. dakikada uyarı
-let _idleLogoutTimer   = null;
-let _idleWarnTimer     = null;
-let _idleWarnShown     = false;
+let _midnightTimer = null;
 
-function resetIdleTimer() {
-  if (!currentUser) return; // giriş yapılmamışsa çalışma
-
-  clearTimeout(_idleLogoutTimer);
-  clearTimeout(_idleWarnTimer);
-  _idleWarnShown = false;
-
-  // 55. dakikada uyarı
-  _idleWarnTimer = setTimeout(() => {
+function scheduleMidnightLogout() {
+  clearTimeout(_midnightTimer);
+  const now = new Date();
+  // Bir sonraki gece yarısından birkaç saniye sonrası (00:00:05)
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5, 0);
+  const ms = next.getTime() - now.getTime();
+  _midnightTimer = setTimeout(async function() {
     if (!currentUser) return;
-    _idleWarnShown = true;
-    showToast('⚠️ 5 dakika içinde otomatik çıkış yapılacak! Devam etmek için ekrana tıklayın.', 'warn', 10000);
-  }, IDLE_WARN_MS);
-
-  // 60. dakikada otomatik çıkış
-  _idleLogoutTimer = setTimeout(async () => {
-    if (!currentUser) return;
-    showToast('⏱️ 1 saat işlem yapılmadığı için otomatik çıkış yapıldı.', 'warn', 5000);
-    await doLogout();
-  }, IDLE_TIMEOUT_MS);
+    showToast('🌙 Gün değişti — güvenlik için oturum kapatılıyor.', 'warn', 6000);
+    try { await doLogout(); } catch (e) { console.error(e); }
+  }, ms);
 }
 
-function startIdleTimer() {
-  const events = ['mousemove','mousedown','keydown','touchstart','scroll','click'];
-  events.forEach(ev => document.addEventListener(ev, resetIdleTimer, { passive: true }));
-  resetIdleTimer(); // ilk tetik
+function cancelMidnightLogout() {
+  clearTimeout(_midnightTimer);
+  _midnightTimer = null;
 }
 
-function stopIdleTimer() {
-  clearTimeout(_idleLogoutTimer);
-  clearTimeout(_idleWarnTimer);
-  const events = ['mousemove','mousedown','keydown','touchstart','scroll','click'];
-  events.forEach(ev => document.removeEventListener(ev, resetIdleTimer));
-}
+// Geriye dönük uyumluluk için boş bırakıldı (artık hareketsizlik çıkışı yok)
+function startIdleTimer() {}
+function resetIdleTimer() {}
+function stopIdleTimer() {}
 
 // ============================================================
 // NAV
