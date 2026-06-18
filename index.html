@@ -8,11 +8,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 
   <!-- Firebase -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, set, get, update, onValue, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-    const firebaseConfig = {
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script>
+    var firebaseConfig = {
       apiKey: "AIzaSyAsKR8gLUMtmZ5Yok1l0oOFwxWxfPIgym8",
       authDomain: "casa36-b24d4.firebaseapp.com",
       databaseURL: "https://casa36-b24d4-default-rtdb.firebaseio.com",
@@ -21,10 +21,22 @@
       messagingSenderId: "627246654743",
       appId: "1:627246654743:web:8ff2edffa707606e540352"
     };
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+    firebase.initializeApp(firebaseConfig);
+    var _fdb = firebase.database();
 
-    window._fb = { db, ref, set, get, update, onValue, remove, serverTimestamp };
+    // Modular API uyumlu wrapper
+    window._fb = {
+      db: _fdb,
+      ref: function(dbOrPath, path) {
+        return path !== undefined ? _fdb.ref(path) : _fdb.ref(dbOrPath);
+      },
+      get: function(r) { return r.once('value'); },
+      set: function(r, v) { return r.set(v); },
+      update: function(r, v) { return r.update(v); },
+      remove: function(r) { return r.remove(); },
+      onValue: function(r, cb) { r.on('value', cb); return function(){r.off('value',cb);}; },
+      serverTimestamp: firebase.database.ServerValue.TIMESTAMP
+    };
     window._fbReady = true;
     window.dispatchEvent(new Event('fbReady'));
   </script>
