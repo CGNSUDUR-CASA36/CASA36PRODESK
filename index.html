@@ -8,10 +8,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 
   <!-- Firebase -->
-  <!-- Firebase compat - works everywhere including GitHub Pages -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, set, get, update, onValue, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
     const firebaseConfig = {
       apiKey: "AIzaSyAsKR8gLUMtmZ5Yok1l0oOFwxWxfPIgym8",
       authDomain: "casa36-b24d4.firebaseapp.com",
@@ -21,33 +21,10 @@
       messagingSenderId: "627246654743",
       appId: "1:627246654743:web:8ff2edffa707606e540352"
     };
-    firebase.initializeApp(firebaseConfig);
-    const _db = firebase.database();
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-    // Compat API wrapper - mevcut kodla uyumlu
-    window._fb = {
-      db: _db,
-      ref: function(db, path) {
-        // path yoksa db'yi ref olarak döndür
-        if (path === undefined) return _db.ref(db);
-        return _db.ref(path);
-      },
-      set: function(ref, data) { return ref.set(data); },
-      get: function(ref) {
-        // Compat API'de .once('value') Promise döndürür
-        return ref.once('value').then(function(snap) {
-          // Modular API ile uyumlu: snap.val() hala çalışır
-          return snap;
-        });
-      },
-      update: function(ref, data) { return ref.update(data); },
-      onValue: function(ref, cb) {
-        ref.on('value', cb);
-        return function() { ref.off('value', cb); };
-      },
-      remove: function(ref) { return ref.remove(); },
-      serverTimestamp: firebase.database.ServerValue.TIMESTAMP
-    };
+    window._fb = { db, ref, set, get, update, onValue, remove, serverTimestamp };
     window._fbReady = true;
     window.dispatchEvent(new Event('fbReady'));
   </script>
@@ -818,8 +795,13 @@ const COLORS = ['#00c4ff','#00e676','#ff7043','#ffb300','#ab47bc','#26c6da','#66
 // WAIT FOR FIREBASE
 // ============================================================
 function waitFb(cb) {
-  if (window._fbReady) { cb(); return; }
-  window.addEventListener('fbReady', function() { cb(); }, { once: true });
+  if (window._fbReady) { setTimeout(cb, 0); return; }
+  window.addEventListener('fbReady', function() { setTimeout(cb, 0); }, { once: true });
+  // Güvenlik: 15sn timeout
+  var t = setTimeout(function() {
+    if (!window._fbReady) { showLoginError('Firebase bağlantısı kurulamadı. Sayfayı yenileyin.'); }
+  }, 15000);
+  window.addEventListener('fbReady', function() { clearTimeout(t); }, { once: true });
 }
 
 // ============================================================
