@@ -797,7 +797,7 @@ const COLORS = ['#00c4ff','#00e676','#ff7043','#ffb300','#ab47bc','#26c6da','#66
 // ============================================================
 function waitFb(cb) {
   if (window._fbReady) { cb(); return; }
-  window.addEventListener('fbReady', cb, { once: true });
+  window.addEventListener('fbReady', function() { cb(); }, { once: true });
 }
 
 // ============================================================
