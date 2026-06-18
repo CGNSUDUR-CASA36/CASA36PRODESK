@@ -1455,18 +1455,55 @@ async function deleteTickerItem(id) {
 // NOTLAR (NOTES)
 // ============================================================
 let _notesData = {};
+let _notesFilter = 'all';
+let _notesFormOpen = false;
+let _editingNoteId = null;
+let _notePrefill = null;
+
+const NOTE_PRIORITIES = {
+  critical: { label: 'Çok Önemli', color: '#ff4d4f', icon: '🔴', order: 0 },
+  important:{ label: 'Önemli',     color: '#ff9800', icon: '🟠', order: 1 },
+  medium:   { label: 'Orta',       color: '#ffc107', icon: '🟡', order: 2 },
+  low:      { label: 'Düşük',      color: '#22c55e', icon: '🟢', order: 3 }
+};
+
+const NOTE_TEMPLATES = [
+  { title: 'Fiyat Bilgilendirme', priority: 'important', content: 'Oda Tipi: \nFiyat: \nKahvaltı: \nGeçerlilik: ' },
+  { title: 'Grup / Etkinlik Konaklama', priority: 'medium', content: 'Tarih: \nKişi sayısı: \nOda tipi ve fiyat: \nNot: ' },
+  { title: 'Acil Duyuru', priority: 'critical', content: '' }
+];
+
+function normPriority(p) {
+  if (!p) return 'medium';
+  const s = String(p).toLowerCase().replace(/[\s_]/g, '');
+  if (['critical','cokonemli','çokönemli','veryhigh','urgent','acil'].indexOf(s) >= 0) return 'critical';
+  if (['important','onemli','önemli','high','yuksek','yüksek'].indexOf(s) >= 0) return 'important';
+  if (['low','dusuk','düşük'].indexOf(s) >= 0) return 'low';
+  return 'medium';
+}
 
 function notesSorted() {
   return Object.keys(_notesData).map(function(id) {
     const v = _notesData[id] || {};
+    if (typeof v === 'string') {
+      return { id: id, title: '', content: v, priority: 'medium', startDate: '', endDate: '', createdAt: 0, author: '' };
+    }
     return {
       id: id,
-      text: (typeof v === 'string') ? v : (v.text || ''),
-      createdAt: v.createdAt || 0,
-      author: v.author || ''
+      title: v.title || v.baslik || v.header || '',
+      content: v.content || v.text || v.icerik || v.body || '',
+      priority: normPriority(v.priority || v.oncelik || v.level),
+      startDate: v.startDate || v.start || v.baslangic || '',
+      endDate: v.endDate || v.end || v.bitis || '',
+      createdAt: v.createdAt || v.created || v.ts || 0,
+      author: v.author || v.yazan || v.user || ''
     };
-  }).filter(function(x) { return x.text.trim() !== ''; })
-    .sort(function(a, b) { return b.createdAt - a.createdAt; });
+  }).filter(function(x) { return (x.title + x.content).trim() !== ''; })
+    .sort(function(a, b) {
+      const pa = NOTE_PRIORITIES[a.priority].order, pb = NOTE_PRIORITIES[b.priority].order;
+      if (pa !== pb) return pa - pb;
+      return b.createdAt - a.createdAt;
+    });
 }
 
 function listenNotes() {
@@ -1474,67 +1511,190 @@ function listenNotes() {
   onValue(ref(db, 'notes'), function(snap) {
     _notesData = snap.val() || {};
     const np = document.getElementById('notes-panel');
-    if (np && np.style.display !== 'none') renderNotesPanel();
+    // Form açıkken yeniden çizme (kullanıcının yazdığı kaybolmasın)
+    if (np && np.style.display !== 'none' && !_notesFormOpen) renderNotesPanel();
   });
+}
+
+function formatNoteDates(start, end) {
+  function f(d) {
+    if (!d) return '';
+    const p = String(d).split('-');
+    if (p.length === 3) return p[2] + '.' + p[1] + '.' + p[0];
+    return d;
+  }
+  const s = f(start), e = f(end);
+  if (s && e) return s + ' – ' + e;
+  if (s) return s + ' →';
+  if (e) return '→ ' + e;
+  return 'Süresiz';
+}
+
+function noteFormHTML() {
+  let cur = { title: '', content: '', priority: 'medium', startDate: '', endDate: '' };
+  if (_editingNoteId) {
+    const found = notesSorted().filter(function(n) { return n.id === _editingNoteId; })[0];
+    if (found) cur = found;
+  } else if (_notePrefill) {
+    cur = { title: _notePrefill.title || '', content: _notePrefill.content || '', priority: _notePrefill.priority || 'medium', startDate: '', endDate: '' };
+  }
+  _notePrefill = null;
+
+  let opts = '';
+  ['critical', 'important', 'medium', 'low'].forEach(function(k) {
+    opts += '<option value="' + k + '"' + (cur.priority === k ? ' selected' : '') + '>' + NOTE_PRIORITIES[k].label + '</option>';
+  });
+
+  let h = '<div class="admin-card" style="margin-bottom:6px;">';
+  h += '<div class="admin-card-title">' + (_editingNoteId ? '✏️ <span>Notu Düzenle</span>' : '➕ <span>Yeni Not</span> Ekle') + '</div>';
+  h += '<input class="admin-input" id="note-title" placeholder="Başlık (zorunlu)" value="' + escapeHtml(cur.title) + '" />';
+  h += '<textarea class="admin-input" id="note-content" placeholder="Not içeriği..." style="min-height:90px;resize:vertical;">' + escapeHtml(cur.content) + '</textarea>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">';
+  h += '<div style="flex:1;min-width:150px;"><label style="font-size:0.78rem;color:rgba(255,255,255,0.5);display:block;margin-bottom:4px;">Öncelik</label><select class="admin-input" id="note-priority" style="margin-bottom:0;">' + opts + '</select></div>';
+  h += '<div style="flex:1;min-width:150px;"><label style="font-size:0.78rem;color:rgba(255,255,255,0.5);display:block;margin-bottom:4px;">Başlangıç Tarihi <span style="opacity:.6">(boş=süresiz)</span></label><input class="admin-input" type="date" id="note-start" value="' + escapeHtml(cur.startDate) + '" style="margin-bottom:0;" /></div>';
+  h += '<div style="flex:1;min-width:150px;"><label style="font-size:0.78rem;color:rgba(255,255,255,0.5);display:block;margin-bottom:4px;">Bitiş Tarihi <span style="opacity:.6">(boş=süresiz)</span></label><input class="admin-input" type="date" id="note-end" value="' + escapeHtml(cur.endDate) + '" style="margin-bottom:0;" /></div>';
+  h += '</div>';
+  h += '<div style="font-size:0.74rem;color:#ffb300;margin:10px 0 12px;">📍 Tarih alanlarını boş bırakırsanız not süresiz geçerli olur.</div>';
+  h += '<div style="display:flex;gap:8px;">';
+  h += '<button class="admin-btn admin-btn-primary" onclick="saveNote()">💾 Kaydet</button>';
+  h += '<button class="admin-btn" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.12);" onclick="cancelNoteForm()">İptal</button>';
+  h += '</div></div>';
+  return h;
 }
 
 function renderNotesPanel() {
   const panel = document.getElementById('notes-panel');
   if (!panel) return;
-  const isAdminOrManager = currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager');
-  const items = notesSorted();
+  const isMgr = currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager');
+  const all = notesSorted();
 
-  let addBox = '';
-  if (isAdminOrManager) {
-    addBox = '<div class="admin-card" style="margin-bottom:20px;">'
-      + '<div class="admin-card-title">📌 <span>Yeni Not</span> Ekle</div>'
-      + '<textarea class="admin-input" id="note-new-input" placeholder="Not metni..." style="min-height:80px;resize:vertical;"></textarea>'
-      + '<button class="admin-btn admin-btn-primary" onclick="addNote()">➕ Notu Ekle</button>'
-      + '</div>';
+  let h = '<div style="max-width:900px;margin:0 auto;">';
+
+  // Başlık
+  h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px;">';
+  h += '<div><div style="font-size:1.4rem;font-weight:800;color:#fff;">🚀 Özel <span style="color:#00c4ff;">Notlar</span></div>';
+  h += '<div style="font-size:0.82rem;color:rgba(255,255,255,0.4);margin-top:2px;">Tüm personel için önemli bilgiler ve hatırlatmalar</div></div>';
+  if (isMgr) {
+    if (_notesFormOpen) {
+      h += '<button class="admin-btn" style="background:rgba(0,196,255,0.12);color:#00c4ff;border:1px solid rgba(0,196,255,0.3);flex-shrink:0;" onclick="cancelNoteForm()">✕ Kapat</button>';
+    } else {
+      h += '<button class="admin-btn admin-btn-primary" style="flex-shrink:0;" onclick="openNoteForm()">+ Yeni Not Ekle</button>';
+    }
   }
+  h += '</div>';
 
-  let listHTML;
-  if (!items.length) {
-    listHTML = '<div style="color:rgba(255,255,255,0.3);font-size:0.9rem;text-align:center;padding:24px;">Henüz not eklenmemiş.</div>';
+  // Form
+  if (isMgr && _notesFormOpen) h += noteFormHTML();
+
+  // Filtre pilleri
+  const pills = [['all', 'Tümü'], ['critical', 'Çok Önemli'], ['important', 'Önemli'], ['medium', 'Orta'], ['low', 'Düşük'], ['templates', 'Şablonlar']];
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px;">';
+  pills.forEach(function(p) {
+    const active = _notesFilter === p[0];
+    h += '<button onclick="setNotesFilter(\'' + p[0] + '\')" style="padding:6px 16px;border-radius:18px;font-size:0.8rem;font-weight:600;cursor:pointer;border:1px solid ' + (active ? '#00c4ff' : 'rgba(255,255,255,0.12)') + ';background:' + (active ? 'rgba(0,196,255,0.15)' : 'transparent') + ';color:' + (active ? '#00c4ff' : 'rgba(255,255,255,0.55)') + ';">' + p[1] + '</button>';
+  });
+  h += '</div>';
+
+  if (_notesFilter === 'templates') {
+    h += '<div style="color:rgba(255,255,255,0.4);font-size:0.82rem;margin-bottom:12px;">Hazır şablonlar — birine tıklayıp formu otomatik doldurabilirsiniz.</div>';
+    NOTE_TEMPLATES.forEach(function(t, idx) {
+      const meta = NOTE_PRIORITIES[t.priority];
+      h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:12px;padding:14px 16px;margin-bottom:12px;">';
+      h += '<div style="display:inline-flex;align-items:center;gap:6px;background:' + meta.color + '22;color:' + meta.color + ';font-size:0.68rem;font-weight:700;padding:3px 10px;border-radius:20px;margin-bottom:8px;">' + meta.icon + ' ' + meta.label + '</div>';
+      h += '<div style="font-weight:700;color:#fff;margin-bottom:4px;">' + escapeHtml(t.title) + '</div>';
+      if (t.content) h += '<div style="white-space:pre-wrap;color:#94a3b8;font-size:0.82rem;">' + escapeHtml(t.content) + '</div>';
+      if (isMgr) h += '<button class="admin-btn admin-btn-primary" style="margin-top:10px;padding:4px 12px;font-size:0.72rem;" onclick="openNoteTemplate(' + idx + ')">📋 Bu şablonu kullan</button>';
+      h += '</div>';
+    });
   } else {
-    listHTML = items.map(function(n) {
-      const date = n.createdAt ? new Date(n.createdAt).toLocaleString('tr-TR') : '';
-      const delBtn = isAdminOrManager
-        ? '<button class="admin-btn admin-btn-danger" style="padding:4px 10px;font-size:0.72rem;flex-shrink:0;" onclick="deleteNote(\'' + n.id + '\')">🗑️ Sil</button>'
-        : '';
-      return '<div class="admin-card" style="margin-bottom:12px;">'
-        + '<div style="display:flex;gap:10px;align-items:flex-start;">'
-        + '<div style="flex:1;white-space:pre-wrap;color:#e2e8f0;font-size:0.92rem;line-height:1.5;">' + escapeHtml(n.text) + '</div>'
-        + delBtn
-        + '</div>'
-        + (date ? '<div style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin-top:8px;">' + escapeHtml(n.author) + (n.author ? ' • ' : '') + date + '</div>' : '')
-        + '</div>';
-    }).join('');
+    const items = (_notesFilter === 'all') ? all : all.filter(function(n) { return n.priority === _notesFilter; });
+    if (!items.length) {
+      h += '<div style="color:rgba(255,255,255,0.3);font-size:0.95rem;text-align:center;padding:40px;">Bu kategoride not yok.</div>';
+    } else {
+      items.forEach(function(n) {
+        const meta = NOTE_PRIORITIES[n.priority];
+        const dateStr = formatNoteDates(n.startDate, n.endDate);
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-left:4px solid ' + meta.color + ';border-radius:12px;padding:16px 18px;margin-bottom:14px;">';
+        h += '<div style="display:inline-flex;align-items:center;gap:6px;background:' + meta.color + '22;color:' + meta.color + ';font-size:0.68rem;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">' + meta.icon + ' ' + meta.label + '</div>';
+        if (n.title) h += '<div style="font-size:1rem;font-weight:700;color:#fff;margin-bottom:6px;">' + escapeHtml(n.title) + '</div>';
+        if (n.content) h += '<div style="white-space:pre-wrap;color:#cbd5e1;font-size:0.9rem;line-height:1.55;">' + escapeHtml(n.content) + '</div>';
+        const footer = [];
+        if (dateStr) footer.push('📅 ' + dateStr);
+        if (n.author) footer.push('✍️ ' + escapeHtml(n.author));
+        if (footer.length) h += '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);margin-top:10px;">' + footer.join('  •  ') + '</div>';
+        if (isMgr) {
+          h += '<div style="display:flex;gap:6px;margin-top:12px;">';
+          h += '<button class="admin-btn admin-btn-primary" style="padding:4px 12px;font-size:0.72rem;" onclick="editNote(\'' + n.id + '\')">✏️ Düzenle</button>';
+          h += '<button class="admin-btn admin-btn-danger" style="padding:4px 12px;font-size:0.72rem;" onclick="deleteNote(\'' + n.id + '\')">🗑️ Sil</button>';
+          h += '</div>';
+        }
+        h += '</div>';
+      });
+    }
   }
 
-  panel.innerHTML = '<div style="max-width:760px;margin:0 auto;">'
-    + '<h2 style="color:#fff;font-size:1.3rem;margin-bottom:18px;">📌 Notlar</h2>'
-    + addBox + listHTML + '</div>';
+  h += '</div>';
+  panel.innerHTML = h;
 }
 
-async function addNote() {
-  const input = document.getElementById('note-new-input');
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text) { showToast('Not metni boş olamaz.', 'warn'); return; }
+function openNoteForm() {
+  _editingNoteId = null; _notePrefill = null; _notesFormOpen = true;
+  if (_notesFilter === 'templates') _notesFilter = 'all';
+  renderNotesPanel();
+}
+
+function editNote(id) {
+  _editingNoteId = id; _notePrefill = null; _notesFormOpen = true;
+  if (_notesFilter === 'templates') _notesFilter = 'all';
+  renderNotesPanel();
+}
+
+function cancelNoteForm() {
+  _notesFormOpen = false; _editingNoteId = null; _notePrefill = null;
+  renderNotesPanel();
+}
+
+function setNotesFilter(f) {
+  _notesFilter = f;
+  renderNotesPanel();
+}
+
+function openNoteTemplate(idx) {
+  const t = NOTE_TEMPLATES[idx];
+  if (!t) return;
+  _notePrefill = { title: t.title, content: t.content, priority: t.priority };
+  _editingNoteId = null; _notesFormOpen = true; _notesFilter = 'all';
+  renderNotesPanel();
+}
+
+async function saveNote() {
+  const title = document.getElementById('note-title').value.trim();
+  const content = document.getElementById('note-content').value.trim();
+  const priority = document.getElementById('note-priority').value;
+  const startDate = document.getElementById('note-start').value;
+  const endDate = document.getElementById('note-end').value;
+  if (!title) { showToast('Başlık zorunludur.', 'warn'); return; }
   try {
-    const { db, ref, set } = window._fb;
-    const id = 'n_' + Date.now();
-    await set(ref(db, 'notes/' + id), {
-      text: text,
-      createdAt: Date.now(),
-      author: (currentUser && currentUser.name) || ''
-    });
-    input.value = '';
-    showToast('Not eklendi.');
+    const { db, ref, set, update } = window._fb;
+    if (_editingNoteId) {
+      await update(ref(db, 'notes/' + _editingNoteId), {
+        title: title, content: content, priority: priority, startDate: startDate, endDate: endDate
+      });
+      showToast('Not güncellendi.');
+    } else {
+      const id = 'n_' + Date.now();
+      await set(ref(db, 'notes/' + id), {
+        title: title, content: content, priority: priority,
+        startDate: startDate, endDate: endDate,
+        createdAt: Date.now(), author: (currentUser && currentUser.name) || ''
+      });
+      showToast('Not eklendi.');
+    }
+    _notesFormOpen = false; _editingNoteId = null;
+    renderNotesPanel();
   } catch (e) {
     console.error(e);
-    showToast('Not eklenemedi.', 'error');
+    showToast('Not kaydedilemedi.', 'error');
   }
 }
 
