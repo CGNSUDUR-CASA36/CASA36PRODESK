@@ -628,7 +628,7 @@
 <div class="stars-layer" id="starsLayer"></div>
 
 <!-- Loading -->
-<div class="loading-screen" id="loadingScreen">
+<div class="loading-screen hidden" id="loadingScreen">
   <div class="loading-spinner"></div>
 </div>
 
@@ -1364,7 +1364,7 @@ setTimeout(function() {
     ls.classList.add('hidden');
     console.warn('Loading timeout - force closed');
   }
-}, 8000);
+}, 100);
 </script>
 
 </body>
