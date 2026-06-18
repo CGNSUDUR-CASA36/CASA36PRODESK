@@ -27,11 +27,24 @@
     // Compat API wrapper - mevcut kodla uyumlu
     window._fb = {
       db: _db,
-      ref: function(db, path) { return _db.ref(path); },
+      ref: function(db, path) {
+        // path yoksa db'yi ref olarak döndür
+        if (path === undefined) return _db.ref(db);
+        return _db.ref(path);
+      },
       set: function(ref, data) { return ref.set(data); },
-      get: function(ref) { return ref.get(); },
+      get: function(ref) {
+        // Compat API'de .once('value') Promise döndürür
+        return ref.once('value').then(function(snap) {
+          // Modular API ile uyumlu: snap.val() hala çalışır
+          return snap;
+        });
+      },
       update: function(ref, data) { return ref.update(data); },
-      onValue: function(ref, cb) { ref.on('value', cb); return function(){ ref.off('value', cb); }; },
+      onValue: function(ref, cb) {
+        ref.on('value', cb);
+        return function() { ref.off('value', cb); };
+      },
       remove: function(ref) { return ref.remove(); },
       serverTimestamp: firebase.database.ServerValue.TIMESTAMP
     };
